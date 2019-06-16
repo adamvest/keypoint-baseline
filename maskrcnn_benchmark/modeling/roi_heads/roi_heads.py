@@ -4,6 +4,7 @@ import torch
 from .box_head.box_head import build_roi_box_head
 from .mask_head.mask_head import build_roi_mask_head
 from .keypoint_head.keypoint_head import build_roi_keypoint_head
+from .shape_class_head.shape_class_head import build_roi_shape_class_head
 
 
 class CombinedROIHeads(torch.nn.ModuleDict):
@@ -25,6 +26,7 @@ class CombinedROIHeads(torch.nn.ModuleDict):
         # TODO rename x to roi_box_features, if it doesn't increase memory consumption
         x, detections, loss_box = self.box(features, proposals, targets)
         losses.update(loss_box)
+
         if self.cfg.MODEL.MASK_ON:
             mask_features = features
             # optimization: during training, if we share the feature extractor between
@@ -52,6 +54,19 @@ class CombinedROIHeads(torch.nn.ModuleDict):
             # this makes the API consistent during training and testing
             x, detections, loss_keypoint = self.keypoint(keypoint_features, detections, targets)
             losses.update(loss_keypoint)
+
+        if self.cfg.MODEL.SHAPE_CLASS_ON:
+            shape_class_features = features
+
+            if (
+                self.training
+                and self.cfg.MODEL.ROI_SHAPE_CLASS_HEAD.SHARE_BOX_FEATURE_EXTRACTOR
+            ):
+                shape_class_features = x
+
+            x, detections, loss_shape_class = self.shape_class(shape_class_features, detections, targets)
+            losses.update(loss_shape_class)
+
         return x, detections, losses
 
 
@@ -68,6 +83,8 @@ def build_roi_heads(cfg, in_channels):
         roi_heads.append(("mask", build_roi_mask_head(cfg, in_channels)))
     if cfg.MODEL.KEYPOINT_ON:
         roi_heads.append(("keypoint", build_roi_keypoint_head(cfg, in_channels)))
+    if cfg.MODEL.SHAPE_CLASS_ON:
+        roi_heads.append(("shape_class", build_roi_shape_class_head(cfg, in_channels)))
 
     # combine individual heads in a single module
     if roi_heads:

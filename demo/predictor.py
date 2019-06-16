@@ -1,8 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import cv2
+import json
 import torch
 from torchvision import transforms as T
-
+import numpy as np
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.structures.image_list import to_image_list
@@ -10,91 +12,29 @@ from maskrcnn_benchmark.modeling.roi_heads.mask_head.inference import Masker
 from maskrcnn_benchmark import layers as L
 from maskrcnn_benchmark.utils import cv2_util
 
+colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 128, 0], [255, 0, 128],
+                        [128, 255, 0], [128, 0, 255], [128, 128, 0], [128, 0, 128], [0, 128, 128], [255, 100, 100],
+                        [100, 255, 100], [100, 100, 255]]
+color_table = np.array([[255.0, 255.0, 255.0], [255.0, 0.0, 0.0], [0.0, 255.0, 0.0], [0.0, 0.0, 255.0], [255.0, 128.0, 0.0], [255.0, 0.0, 128.0],
+                                [128.0, 255.0, 0.0], [128.0, 0.0, 255.0], [128.0, 128.0, 0.0], [128.0, 0.0, 128.0], [0.0, 128.0, 128.0], [255.0, 100.0, 100.0],
+                                [100.0, 255.0, 100.0], [100.0, 100.0, 255.0], [0.0, 255.0, 255.0], [255.0, 0.0, 255.0], [255.0, 255.0, 0.0],[255.0, 155.0, 0.0],
+                                [155.0, 255.0, 0.0],[255.0, 255.0, 155.0],[155.0, 155.0, 0.0],[155.0, 55.0, 0.0], [0.0, 0.0, 0.0], [200.0, 200.0, 200.0], [200.0, 0.0, 200.0]])
+
+KEEP_MAP = {
+    0: torch.tensor([0, 3, 4], dtype=torch.int32),
+    1: torch.tensor([1, 2, 3, 4], dtype=torch.int32),
+    2: torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32)
+}
+
 
 class COCODemo(object):
     # COCO categories for pretty print
     CATEGORIES = [
         "__background",
-        "person",
-        "bicycle",
-        "car",
-        "motorcycle",
-        "airplane",
-        "bus",
-        "train",
-        "truck",
-        "boat",
-        "traffic light",
-        "fire hydrant",
-        "stop sign",
-        "parking meter",
-        "bench",
-        "bird",
-        "cat",
-        "dog",
-        "horse",
-        "sheep",
-        "cow",
-        "elephant",
-        "bear",
-        "zebra",
-        "giraffe",
-        "backpack",
-        "umbrella",
-        "handbag",
-        "tie",
-        "suitcase",
-        "frisbee",
-        "skis",
-        "snowboard",
-        "sports ball",
-        "kite",
-        "baseball bat",
-        "baseball glove",
-        "skateboard",
-        "surfboard",
-        "tennis racket",
-        "bottle",
-        "wine glass",
-        "cup",
-        "fork",
-        "knife",
-        "spoon",
-        "bowl",
-        "banana",
-        "apple",
-        "sandwich",
-        "orange",
-        "broccoli",
-        "carrot",
-        "hot dog",
-        "pizza",
-        "donut",
-        "cake",
-        "chair",
-        "couch",
-        "potted plant",
-        "bed",
-        "dining table",
-        "toilet",
-        "tv",
-        "laptop",
-        "mouse",
-        "remote",
-        "keyboard",
-        "cell phone",
-        "microwave",
-        "oven",
-        "toaster",
-        "sink",
-        "refrigerator",
-        "book",
-        "clock",
-        "vase",
-        "scissors",
-        "teddy bear",
-        "hair drier",
-        "toothbrush",
+        "Wall",
+        "Garage",
+        "Window",
+        "Door"
     ]
 
     def __init__(
@@ -113,6 +53,7 @@ class COCODemo(object):
         self.min_image_size = min_image_size
 
         save_dir = cfg.OUTPUT_DIR
+
         checkpointer = DetectronCheckpointer(cfg, self.model, save_dir=save_dir)
         _ = checkpointer.load(cfg.MODEL.WEIGHT)
 
@@ -159,7 +100,7 @@ class COCODemo(object):
         )
         return transform
 
-    def run_on_opencv_image(self, image):
+    def run_on_opencv_image(self, image, save_path=None, root=None):
         """
         Arguments:
             image (np.ndarray): an image as returned by OpenCV
@@ -169,20 +110,97 @@ class COCODemo(object):
                 of the detection properties can be found in the fields of
                 the BoxList via `prediction.fields()`
         """
+
         predictions = self.compute_prediction(image)
-        top_predictions = self.select_top_predictions(predictions)
+
+        if predictions is None:
+            return None
+
+        top_predictions, idxes = self.select_top_predictions(predictions)
+
+        if save_path is not None:
+            self.save_predictions(top_predictions, save_path, root)
 
         result = image.copy()
         if self.show_mask_heatmaps:
             return self.create_mask_montage(result, top_predictions)
-        result = self.overlay_boxes(result, top_predictions)
+        # result = self.overlay_boxes(result, top_predictions)
         if self.cfg.MODEL.MASK_ON:
             result = self.overlay_mask(result, top_predictions)
         if self.cfg.MODEL.KEYPOINT_ON:
             result = self.overlay_keypoints(result, top_predictions)
-        result = self.overlay_class_names(result, top_predictions)
 
+        result = self.overlay_class_names(result, top_predictions)
         return result
+
+    def save_predictions(self, preds, save_path, root):
+        fname_base = save_path.split("/")[-1].split("_")[0] + "_" + save_path.split("/")[-1].split("_")[1]
+        boxes = preds.bbox.numpy().tolist()
+        shapes = preds.get_field("shape").numpy().tolist()
+        labels = preds.get_field("labels").numpy().tolist()
+        scores = preds.get_field("scores").numpy().tolist()
+        keypoints = preds.get_field("keypoints").keypoints.numpy()
+
+        res = {"boxes": [], "vector_masks": [], "scores": [], "labels": [], "keypoints": []}
+
+        for region_box, region_label, region_score, region_shape, region_kps in zip(boxes, labels, scores, shapes, keypoints):
+            res["scores"].append(region_score)
+            res["labels"].append(region_label)
+
+            keep = KEEP_MAP[region_shape].numpy()
+            region_kps = region_kps[keep, :2].tolist()
+
+            if region_shape == 1:
+                x_min, y_min, x_max, y_max = region_box
+                bbox_points = [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
+                res["vector_masks"].append(bbox_points)
+            else:
+                res["vector_masks"].append(region_kps)
+
+            res["keypoints"].append(region_kps)
+
+        res["vector_masks"] = self.warp_points_to_original_space(res["vector_masks"], fname_base, root)
+        res["keypoints"] = self.warp_points_to_original_space(res["keypoints"], fname_base, root)
+        res["boxes"] = self.compute_boxes_from_points(res["vector_masks"])
+        res["kp_boxes"] = self.compute_boxes_from_points(res["keypoints"])
+
+        f = open(save_path, "w")
+        json.dump(res, f)
+        f.close()
+
+    def compute_boxes_from_points(self, vector_masks):
+        boxes = []
+
+        for points in vector_masks:
+            x = [pt[0] for pt in points]
+            y = [pt[1] for pt in points]
+            x_min, x_max = min(x), max(x)
+            y_min, y_max = min(y), max(y)
+            w, h = x_max - x_min, y_max - y_min
+            boxes.append([x_min, y_min, w, h])
+
+        return boxes
+
+    def warp_points_to_original_space(self, vector_masks, fname_base, root):
+        hom_mat = np.load(os.path.join(root, "hom_mats", "%s.npy" % fname_base))
+        hom_mat_inv = np.linalg.inv(hom_mat)
+        warped_vector_masks = []
+
+        for points in vector_masks:
+            warped_points = []
+
+            for pt in points:
+                hom_warped_pt = np.dot(hom_mat_inv, [pt[0], pt[1], 1]).tolist()
+
+                if hom_warped_pt[2] == 0.0:
+                    hom_warped_pt[2] += 1e-6
+
+                warped_pt = [hom_warped_pt[0] / hom_warped_pt[2], hom_warped_pt[1] / hom_warped_pt[2]]
+                warped_points.append(warped_pt)
+
+            warped_vector_masks.append(warped_points)
+
+        return warped_vector_masks
 
     def compute_prediction(self, original_image):
         """
@@ -195,23 +213,28 @@ class COCODemo(object):
                 the BoxList via `prediction.fields()`
         """
         # apply pre-processing to image
+
         image = self.transforms(original_image)
         # convert to an ImageList, padded so that it is divisible by
         # cfg.DATALOADER.SIZE_DIVISIBILITY
         image_list = to_image_list(image, self.cfg.DATALOADER.SIZE_DIVISIBILITY)
         image_list = image_list.to(self.device)
+
         # compute predictions
         with torch.no_grad():
-            predictions = self.model(image_list)
+            try:
+                predictions = self.model(image_list)
+            except RuntimeError as e:
+                print("No regions kept after NMS! Skipping image")
+                return None
+
         predictions = [o.to(self.cpu_device) for o in predictions]
 
         # always single image is passed at a time
         prediction = predictions[0]
-
         # reshape prediction (a BoxList) into the original image size
         height, width = original_image.shape[:-1]
         prediction = prediction.resize((width, height))
-
         if prediction.has_field("mask"):
             # if we have masks, paste the masks in the right position
             # in the image, as defined by the bounding boxes
@@ -240,12 +263,15 @@ class COCODemo(object):
         predictions = predictions[keep]
         scores = predictions.get_field("scores")
         _, idx = scores.sort(0, descending=True)
-        return predictions[idx]
+
+        return predictions[idx], idx
 
     def compute_colors_for_labels(self, labels):
         """
         Simple function that adds fixed colors depending on the class
         """
+
+
         colors = labels[:, None] * self.palette
         colors = (colors % 255).numpy().astype("uint8")
         return colors
@@ -264,11 +290,11 @@ class COCODemo(object):
 
         colors = self.compute_colors_for_labels(labels).tolist()
 
-        for box, color in zip(boxes, colors):
+        for ind, box in enumerate(boxes):
             box = box.to(torch.int64)
             top_left, bottom_right = box[:2].tolist(), box[2:].tolist()
             image = cv2.rectangle(
-                image, tuple(top_left), tuple(bottom_right), tuple(color), 1
+                image, tuple(top_left), tuple(bottom_right), tuple(color_table[ind]), 5
             )
 
         return image
@@ -302,10 +328,14 @@ class COCODemo(object):
     def overlay_keypoints(self, image, predictions):
         keypoints = predictions.get_field("keypoints")
         kps = keypoints.keypoints
+        shape_labels = predictions.get_field("shape")
+
         scores = keypoints.get_field("logits")
         kps = torch.cat((kps[:, :, 0:2], scores[:, :, None]), dim=2).numpy()
-        for region in kps:
-            image = vis_keypoints(image, region.transpose((1, 0)))
+
+        for i, region in enumerate(kps):
+            image = vis_keypoints(i, image, region.transpose((1, 0)), shape_labels[i])
+
         return image
 
     def create_mask_montage(self, image, predictions):
@@ -369,16 +399,20 @@ class COCODemo(object):
 
         return image
 
+
+
 import numpy as np
 import matplotlib.pyplot as plt
-from maskrcnn_benchmark.structures.keypoint import PersonKeypoints
+from maskrcnn_benchmark.structures.keypoint import BuildingKeypoints
 
-def vis_keypoints(img, kps, kp_thresh=2, alpha=0.7):
+
+def vis_keypoints(ind, img, kps, shape_label, kp_thresh=0.0, alpha=0.7):
     """Visualizes keypoints (adapted from vis_one_image).
     kps has shape (4, #keypoints) where 4 rows are (x, y, logit, prob).
     """
-    dataset_keypoints = PersonKeypoints.NAMES
-    kp_lines = PersonKeypoints.CONNECTIONS
+
+    dataset_keypoints = BuildingKeypoints.NAMES
+    kp_lines = BuildingKeypoints.CONNECTIONS
 
     # Convert from plt 0-1 RGBA colors to 0-255 BGR colors for opencv.
     cmap = plt.get_cmap('rainbow')
@@ -388,47 +422,17 @@ def vis_keypoints(img, kps, kp_thresh=2, alpha=0.7):
     # Perform the drawing on a copy of the image, to allow for blending.
     kp_mask = np.copy(img)
 
-    # Draw mid shoulder / mid hip first for better visualization.
-    mid_shoulder = (
-        kps[:2, dataset_keypoints.index('right_shoulder')] +
-        kps[:2, dataset_keypoints.index('left_shoulder')]) / 2.0
-    sc_mid_shoulder = np.minimum(
-        kps[2, dataset_keypoints.index('right_shoulder')],
-        kps[2, dataset_keypoints.index('left_shoulder')])
-    mid_hip = (
-        kps[:2, dataset_keypoints.index('right_hip')] +
-        kps[:2, dataset_keypoints.index('left_hip')]) / 2.0
-    sc_mid_hip = np.minimum(
-        kps[2, dataset_keypoints.index('right_hip')],
-        kps[2, dataset_keypoints.index('left_hip')])
-    nose_idx = dataset_keypoints.index('nose')
-    if sc_mid_shoulder > kp_thresh and kps[2, nose_idx] > kp_thresh:
-        cv2.line(
-            kp_mask, tuple(mid_shoulder), tuple(kps[:2, nose_idx]),
-            color=colors[len(kp_lines)], thickness=2, lineType=cv2.LINE_AA)
-    if sc_mid_shoulder > kp_thresh and sc_mid_hip > kp_thresh:
-        cv2.line(
-            kp_mask, tuple(mid_shoulder), tuple(mid_hip),
-            color=colors[len(kp_lines) + 1], thickness=2, lineType=cv2.LINE_AA)
+    keep = KEEP_MAP[shape_label.item()]
+    kps = kps[:, keep]
 
     # Draw the keypoints.
-    for l in range(len(kp_lines)):
-        i1 = kp_lines[l][0]
-        i2 = kp_lines[l][1]
-        p1 = kps[0, i1], kps[1, i1]
-        p2 = kps[0, i2], kps[1, i2]
-        if kps[2, i1] > kp_thresh and kps[2, i2] > kp_thresh:
-            cv2.line(
-                kp_mask, p1, p2,
-                color=colors[l], thickness=2, lineType=cv2.LINE_AA)
-        if kps[2, i1] > kp_thresh:
+    for l in range(kps.shape[1]):
+        p1 = kps[0, l], kps[1, l]
+        if kps[2, l] > kp_thresh:
             cv2.circle(
                 kp_mask, p1,
-                radius=3, color=colors[l], thickness=-1, lineType=cv2.LINE_AA)
-        if kps[2, i2] > kp_thresh:
-            cv2.circle(
-                kp_mask, p2,
-                radius=3, color=colors[l], thickness=-1, lineType=cv2.LINE_AA)
+                radius=10, color=color_table[ind], thickness=-1, lineType=cv2.LINE_AA)
+
 
     # Blend the keypoints.
     return cv2.addWeighted(img, 1.0 - alpha, kp_mask, alpha, 0)

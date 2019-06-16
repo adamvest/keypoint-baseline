@@ -83,8 +83,14 @@ def run_test(cfg, model, distributed):
     iou_types = ("bbox",)
     if cfg.MODEL.MASK_ON:
         iou_types = iou_types + ("segm",)
-    if cfg.MODEL.KEYPOINT_ON:
-        iou_types = iou_types + ("keypoints",)
+
+    #don't run human keypoint evaluation, not useful here
+    # if cfg.MODEL.KEYPOINT_ON:
+    #     iou_types = iou_types + ("keypoints",)
+
+    if cfg.MODEL.SHAPE_CLASS_ON:
+        iou_types = iou_types + ("shape_class",)
+
     output_folders = [None] * len(cfg.DATASETS.TEST)
     dataset_names = cfg.DATASETS.TEST
     if cfg.OUTPUT_DIR:
@@ -112,7 +118,7 @@ def main():
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Training")
     parser.add_argument(
         "--config-file",
-        default="",
+        default="./configs/my_configs/resnext_101_FPN_mask_modified.yaml",
         metavar="FILE",
         help="path to config file",
         type=str,

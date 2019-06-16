@@ -24,7 +24,7 @@ class KeypointPostProcessor(nn.Module):
             bbox = BoxList(box.bbox, box.size, mode="xyxy")
             for field in box.fields():
                 bbox.add_field(field, box.get_field(field))
-            prob = PersonKeypoints(prob, box.size)
+            prob = BuildingKeypoints(prob, box.size)
             prob.add_field("logits", score)
             bbox.add_field("keypoints", prob)
             results.append(bbox)
@@ -95,7 +95,7 @@ def heatmaps_to_keypoints(maps, rois):
 
 
 from maskrcnn_benchmark.structures.bounding_box import BoxList
-from maskrcnn_benchmark.structures.keypoint import PersonKeypoints
+from maskrcnn_benchmark.structures.keypoint import BuildingKeypoints
 
 
 class Keypointer(object):

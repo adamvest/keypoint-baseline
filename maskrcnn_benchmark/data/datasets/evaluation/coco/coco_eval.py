@@ -48,9 +48,18 @@ def do_coco_evaluation(
     if 'keypoints' in iou_types:
         logger.info('Preparing keypoints results')
         coco_results['keypoints'] = prepare_for_coco_keypoint(predictions, dataset)
+    if "shape_class" in iou_types:
+        coco_results['shape_class'] = prepare_for_shape_class(predictions, dataset)
 
-    results = COCOResults(*iou_types)
+    if "shape_class" in iou_types:
+        tmp = list(iou_types)
+        tmp.remove("shape_class")
+        tmp = tuple(tmp)
+        results = COCOResults(*tmp)
+    else:
+        results = COCOResults(*iou_types)
     logger.info("Evaluating predictions")
+
     for iou_type in iou_types:
         with tempfile.NamedTemporaryFile() as f:
             file_path = f.name
@@ -59,7 +68,8 @@ def do_coco_evaluation(
             res = evaluate_predictions_on_coco(
                 dataset.coco, coco_results[iou_type], file_path, iou_type
             )
-            results.update(res)
+            if res is not None:
+                results.update(res)
     logger.info(results)
     check_expected_results(results, expected_results, expected_results_sigma_tol)
     if output_folder:
@@ -185,6 +195,33 @@ def prepare_for_coco_keypoint(predictions, dataset):
             'score': scores[k]} for k, keypoint in enumerate(keypoints)])
     return coco_results
 
+
+def prepare_for_shape_class(predictions, dataset):
+    coco_results = []
+
+    for image_id, prediction in enumerate(predictions):
+        original_id = dataset.id_to_img_map[image_id]
+
+        if len(prediction) == 0:
+            continue
+
+        shape_scores = prediction.get_field("shape_scores").tolist()
+        shape_labels = prediction.get_field("shape").tolist()
+
+        coco_results.extend(
+            [
+                {
+                    "image_id": original_id,
+                    "shape_label": shape_labels[k],
+                    "shape_scores": shape_scores[k],
+                }
+                for k in range(len(shape_labels))
+            ]
+        )
+
+    return coco_results
+
+
 # inspired from Detectron
 def evaluate_box_proposals(
     predictions, dataset, thresholds=None, area="all", limit=None
@@ -309,6 +346,9 @@ def evaluate_predictions_on_coco(
 
     with open(json_result_file, "w") as f:
         json.dump(coco_results, f)
+
+    if iou_type == "shape_class":
+        return None
 
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval

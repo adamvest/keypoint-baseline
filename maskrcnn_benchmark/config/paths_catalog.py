@@ -5,7 +5,7 @@ import os
 
 
 class DatasetCatalog(object):
-    DATA_DIR = "datasets"
+    DATA_DIR = "./maskrcnn_benchmark/data/datasets"
     DATASETS = {
         "coco_2017_train": {
             "img_dir": "coco/train2017",
@@ -103,12 +103,28 @@ class DatasetCatalog(object):
         "cityscapes_fine_instanceonly_seg_test_cocostyle": {
             "img_dir": "cityscapes/images",
             "ann_file": "cityscapes/annotations/instancesonly_filtered_gtFine_test.json"
-        }
+        },
+        "reno_train": {
+            "img_dir": "merged/train",
+            "ann_file": "merged/annotations/instances_train.json"
+        },
+        "reno_test": {
+            "img_dir": "merged/test",
+            "ann_file": "merged/annotations/instances_test.json"
+        },
+        "reno_rec_train": {
+            "img_dir": "reno_rectified/train",
+            "ann_file": "reno_rectified/annotations/instances_train.json"
+        },
+        "reno_rec_test": {
+            "img_dir": "reno_rectified/test",
+            "ann_file": "reno_rectified/annotations/instances_test.json"
+        },
     }
 
     @staticmethod
     def get(name):
-        if "coco" in name:
+        if "coco" in name or "reno" in name:
             data_dir = DatasetCatalog.DATA_DIR
             attrs = DatasetCatalog.DATASETS[name]
             args = dict(

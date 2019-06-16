@@ -23,7 +23,13 @@ def compute_on_dataset(model, data_loader, device, timer=None):
         with torch.no_grad():
             if timer:
                 timer.tic()
-            output = model(images)
+
+            try:
+                output = model(images)
+            except RuntimeError as e:
+                print("No regions kept after NMS! Skipping image")
+                continue
+
             if timer:
                 torch.cuda.synchronize()
                 timer.toc()

@@ -9,7 +9,8 @@ class KeypointRCNNPredictor(nn.Module):
     def __init__(self, cfg, in_channels):
         super(KeypointRCNNPredictor, self).__init__()
         input_features = in_channels
-        num_keypoints = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_CLASSES
+        # num_keypoints = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_CLASSES
+        num_keypoints = 5
         deconv_kernel = 4
         self.kps_score_lowres = layers.ConvTranspose2d(
             input_features,

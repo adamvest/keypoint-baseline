@@ -142,7 +142,7 @@ class KeypointRCNNLossComputation(object):
         self._proposals = proposals
         return proposals
 
-    def __call__(self, proposals, keypoint_logits):
+    def __call__(self, proposals, keypoint_logits, c=.03):
         heatmaps = []
         valid = []
         for proposals_per_image in proposals:
@@ -165,7 +165,7 @@ class KeypointRCNNLossComputation(object):
         N, K, H, W = keypoint_logits.shape
         keypoint_logits = keypoint_logits.view(N * K, H * W)
 
-        keypoint_loss = F.cross_entropy(keypoint_logits[valid], keypoint_targets[valid])
+        keypoint_loss = c * F.cross_entropy(keypoint_logits[valid], keypoint_targets[valid])
         return keypoint_loss
 
 

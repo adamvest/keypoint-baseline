@@ -1,9 +1,13 @@
 import torch
+import skimage.draw
+import numpy as np
+import cv2
 
 
 # transpose
 FLIP_LEFT_RIGHT = 0
 FLIP_TOP_BOTTOM = 1
+
 
 class Keypoints(object):
     def __init__(self, keypoints, size, mode=None):
@@ -14,7 +18,7 @@ class Keypoints(object):
         num_keypoints = keypoints.shape[0]
         if num_keypoints:
             keypoints = keypoints.view(num_keypoints, -1, 3)
-        
+
         # TODO should I split them?
         # self.visibility = keypoints[..., 2]
         self.keypoints = keypoints# [..., :2]
@@ -78,6 +82,12 @@ class Keypoints(object):
     def get_field(self, field):
         return self.extra_fields[field]
 
+    def has_field(self, field):
+        return field in self.extra_fields
+
+    def fields(self):
+        return list(self.extra_fields.keys())
+
     def __repr__(self):
         s = self.__class__.__name__ + '('
         s += 'num_instances={}, '.format(len(self.keypoints))
@@ -94,64 +104,38 @@ def _create_flip_indices(names, flip_map):
     return torch.tensor(flip_indices)
 
 
-class PersonKeypoints(Keypoints):
+class BuildingKeypoints(Keypoints):
+
     NAMES = [
-        'nose',
-        'left_eye',
-        'right_eye',
-        'left_ear',
-        'right_ear',
-        'left_shoulder',
-        'right_shoulder',
-        'left_elbow',
-        'right_elbow',
-        'left_wrist',
-        'right_wrist',
-        'left_hip',
-        'right_hip',
-        'left_knee',
-        'right_knee',
-        'left_ankle',
-        'right_ankle'
+        'top',
+        'top_left',
+        'top_right',
+        'bottom_left',
+        'bottom_right'
     ]
     FLIP_MAP = {
-        'left_eye': 'right_eye',
-        'left_ear': 'right_ear',
-        'left_shoulder': 'right_shoulder',
-        'left_elbow': 'right_elbow',
-        'left_wrist': 'right_wrist',
-        'left_hip': 'right_hip',
-        'left_knee': 'right_knee',
-        'left_ankle': 'right_ankle'
+        'top_left': 'top_right',
+        'bottom_left': 'bottom_right'
     }
 
 
 # TODO this doesn't look great
-PersonKeypoints.FLIP_INDS = _create_flip_indices(PersonKeypoints.NAMES, PersonKeypoints.FLIP_MAP)
+BuildingKeypoints.FLIP_INDS = _create_flip_indices(BuildingKeypoints.NAMES, BuildingKeypoints.FLIP_MAP)
 def kp_connections(keypoints):
     kp_lines = [
-        [keypoints.index('left_eye'), keypoints.index('right_eye')],
-        [keypoints.index('left_eye'), keypoints.index('nose')],
-        [keypoints.index('right_eye'), keypoints.index('nose')],
-        [keypoints.index('right_eye'), keypoints.index('right_ear')],
-        [keypoints.index('left_eye'), keypoints.index('left_ear')],
-        [keypoints.index('right_shoulder'), keypoints.index('right_elbow')],
-        [keypoints.index('right_elbow'), keypoints.index('right_wrist')],
-        [keypoints.index('left_shoulder'), keypoints.index('left_elbow')],
-        [keypoints.index('left_elbow'), keypoints.index('left_wrist')],
-        [keypoints.index('right_hip'), keypoints.index('right_knee')],
-        [keypoints.index('right_knee'), keypoints.index('right_ankle')],
-        [keypoints.index('left_hip'), keypoints.index('left_knee')],
-        [keypoints.index('left_knee'), keypoints.index('left_ankle')],
-        [keypoints.index('right_shoulder'), keypoints.index('left_shoulder')],
-        [keypoints.index('right_hip'), keypoints.index('left_hip')],
+        [keypoints.index('top'), keypoints.index('top_left')],
+        [keypoints.index('top_left'), keypoints.index('bottom_left')],
+        [keypoints.index('bottom_left'), keypoints.index('bottom_right')],
+        [keypoints.index('bottom_right'), keypoints.index('top_right')],
+        [keypoints.index('top_right'), keypoints.index('top')],
     ]
     return kp_lines
-PersonKeypoints.CONNECTIONS = kp_connections(PersonKeypoints.NAMES)
+BuildingKeypoints.CONNECTIONS = kp_connections(BuildingKeypoints.NAMES)
 
 
 # TODO make this nicer, this is a direct translation from C2 (but removing the inner loop)
 def keypoints_to_heat_map(keypoints, rois, heatmap_size):
+
     if rois.numel() == 0:
         return rois.new().long(), rois.new().long()
     offset_x = rois[:, 0]
@@ -174,7 +158,7 @@ def keypoints_to_heat_map(keypoints, rois, heatmap_size):
     x = x.floor().long()
     y = (y - offset_y) * scale_y
     y = y.floor().long()
-    
+
     x[x_boundary_inds] = heatmap_size - 1
     y[y_boundary_inds] = heatmap_size - 1
 
